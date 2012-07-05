@@ -1,0 +1,806 @@
+<?php
+/**
+ * @file 
+ *   A module to integrate the TNSPay Hosted Payment Form into the Ubercart
+ *   e-commerce application
+ */
+
+/**
+ * Define some constants we can use...
+ */
+define('TNSPAY_HPF_UBERCART_URL', 'https://secure.ap.tnspayments.com'); // Base URL for the TNSPay Direct Gateway
+define('TNSPAY_HPF_UBERCART_TXN_AUTH', 'AUTHORIZE'); // Constant for AUTHORIZE transaction type
+define('TNSPAY_HPF_UBERCART_TXN_CAPTURE', 'CAPTURE'); // Constant for CAPTURE transaction type
+define('TNSPAY_HPF_UBERCART_TXN_PAY', 'PAY'); // Constant for PAY transaction type
+define('TNSPAY_HPF_UBERCART_TXN_REFERRAL', 'REFERRAL'); // Constant for REFERRAL transaction type
+define('TNSPAY_HPF_UBERCART_TXN_REFUND', 'REFUND'); // Constant for REFUND transaction type
+define('TNSPAY_HPF_UBERCART_TXN_VOID', 'VOID'); // Constant for VOID transaction type
+define('TNSPAY_HPF_UBERCART_TXN_VERIFY', 'VERIFY'); // Constant for VOID transaction type
+define('TNSPAY_HPF_UBERCART_TXN_RETRIEVE', 'RETRIEVE'); // Constant for VOID transaction type
+define('TNSPAY_HPF_UBERCART_SESSION', 'SESSION'); // Constant for SESSION type
+
+define('TNSPAY_HPF_UBERCART_DEBUG', TRUE);
+
+/**
+ * Implements hook_uc_payment_method
+ */
+function tnspay_hpf_ubercart_uc_payment_method () {
+  $payment_method['tnspay_hpf'] = array(
+      'name' => t('TNSPay Hosted Payment Form'),
+      'title' => t('Secure Credit Card Payment'),
+      'desc' => t('Pay securely by credit card.'),
+      'callback' => 'tnspay_hpf_ubercart_method',
+      'weight'=> 3,
+      'checkout' => TRUE,
+  );
+  
+  // Throw the array back at Drupal.
+  return $payment_method;
+}
+
+/**
+ * 
+ * @param unknown_type $operation
+ * @param unknown_type $order
+ */
+function tnspay_hpf_ubercart_method($operation, &$order, $uc_form = NULL, &$form_state = NULL) {
+  // @todo Work out why the values disappear when we click "Previous" from the cart review?? 
+  
+  switch ($operation) {
+    // cart-details form to enter the data
+    case 'cart-details':
+      $form['card_details'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Credit Card Details'),
+        '#description' => t('Secure Credit Card Payment Details'),
+      );
+            
+      $form['card_details']['gatewayCardNumber'] = array(
+          '#type' => 'textfield',
+          '#title' => t('Credit Card Number'),
+          '#size' => 20,
+//          '#maxlength' => 19,
+          '#parents' => array('gatewayCardNumber'),
+          '#required' => TRUE,
+          '#default_value' => isset($form_state['input']['gatewayCardNumber'])?$form_state['input']['gatewayCardNumber']:"",
+      );
+
+      $form['card_details']['cardholderName'] = array(
+          '#type' => 'textfield',
+          '#title' => t('Name on Credit Card'),
+          '#size' => 32,
+          '#maxlength' => 64,
+      );
+      
+      $form['card_details']['gatewayCardExpiryDateMonth'] = array(
+          '#type' => 'select',
+          '#title' => t('Expiry Date Month'),
+          '#options' => array(
+              '1' => t('January'),
+              '2' => t('February'),
+              '3' => t('March'),
+              '4' => t('April'),
+              '5' => t('May'),
+              '6' => t('June'),
+              '7' => t('July'),
+              '8' => t('August'),
+              '9' => t('September'),
+              '10' => t('October'),
+              '11' => t('November'),
+              '12' => t('December'),
+          ),
+          '#class' => 'form-select',
+          '#parents' => array('gatewayCardExpiryDateMonth'),
+          '#required' => TRUE,
+          '#default_value' => isset($form_state['input']['gatewayCardExpiryDateMonth'])?$form_state['input']['gatewayCardExpiryDateMonth']:1,
+      );
+      
+      $form['card_details']['gatewayCardExpiryDateYear'] = array(
+          '#type' => 'textfield',
+          '#title' => t('Expiry Date Year'),
+          '#size' => 4,
+//          '#maxlength' => 4,
+          '#parents' => array('gatewayCardExpiryDateYear'),
+          '#required' => TRUE,
+          '#default_value' => isset($form_state['input']['gatewayCardExpiryDateYear'])?$form_state['input']['gatewayCardExpiryDateYear']:"",
+      );
+      
+      $form['card_details']['gatewayCardSecurityCode'] = array(
+          '#type' => 'textfield',
+          '#title' => t('Credit Card Security Number'),
+          '#size' => 4,
+//          '#maxlength' => 4,
+          '#parents' => array('gatewayCardSecurityCode'),
+          '#required' => TRUE,
+          '#default_value' => isset($form_state['input']['gatewayCardSecurityCode'])?$form_state['input']['gatewayCardSecurityCode']:"",
+      );
+
+      $form['card_details']['gatewayReturnURL'] = array(
+          '#type' => 'hidden',
+          '#value' => "http://" . $_SERVER['SERVER_NAME'] . "/cart/checkout", // @todo fix this as http vs https
+          '#parents' => array('gatewayReturnURL'),
+      );
+            
+      return $form;
+      break;
+    
+    // cart-process case for validating the data... 
+    case 'cart-process':
+      // Probably if this is valid, we should save the masked card details to the payent details..
+      
+      // This is picked up in the form validation routine...
+      return $form_state['checkout_valid'];
+      break;
+
+    // Process the order payment  
+    case 'order-submit': 
+        
+      $data = array('txn_type' => 'auth_capture'); // @todo Need to set up the way that they want to do transactions in the settings... 
+      
+      // set up some payment details
+      
+     // $order->payment_details = array();
+      //echo "PAYMENT - DETAILS: " . $order->payment_details; die;      
+      
+      return tnspay_hpf_ubercart_process_transaction($order->order_id, $order->order_total, $data);
+      
+      break;
+      
+    case 'edit-process': 
+      
+      echo "EDIT PROCESS"; die;
+      
+      break;
+      
+    // settings for the admin screen.      
+    case 'settings': 
+      // Decrypt the sensitive stuff before we display the form...
+      /**
+       * @todo Do the decryption of sensitive values at the start of this form
+       */
+      
+      // Section for setting the base URL and version of the API - might add test v live here also
+      $form['api_settings'] = array(
+          '#type' => 'fieldset',
+          '#title' => t('API URL and Version'),
+          '#description' => t('This information is required for Ubercart to interact with the TNS Payment gateway.  It allows you to choose the version of the gateway or customise it to a specific URL if needed. WARNING - do not adjust URLs unless you know what you\'re doing!'),
+      );
+      // Set the base URLs
+      /**
+       * @todo Write a warning about messing with the URLs...
+       */
+      $form['api_settings']['tnspay_hpf_ubercart_api_URL'] = array(
+          '#type' => 'textfield',
+          '#title' => t('Base URL for the TNSPay gateway.'),
+          '#default_value' => variable_get('tnspay__hpf_ubercart_api_URL', TNSPAY_HPF_UBERCART_URL),
+      );
+      
+      // Set Live vs Test
+      $form['api_settings']['tnspay_hpf_ubercart_api_mode'] = array(
+          '#type' => 'radios',
+          '#title' => t('TNSPay gateway mode.'),
+          '#description' => t('WARNING - Operating in Test mode will not ever complete a real transaction. No money will be deducted'),
+          '#options' => array(
+              'Live' => t('Live Mode - Transactions will be processed against the card'),
+              'Test' => t('Test Mode - Transactions WILL NOT be processed against the card'),
+          ),
+          '#default_value' => variable_get('tnspay_hpf_ubercart_api_mode','Live'),
+      );
+      
+      // Set the version that you're in
+      $form['api_settings']['tnspay_hpf_ubercart_api_version'] = array(
+          '#type' => 'select',
+          '#title' => t('API Version'),
+          '#description' => t('The version of the API that you want to connect to. Only supported versions are available'),
+          '#options' => drupal_map_assoc(array(6, 7)),
+          '#default_value' => variable_get('tnspay_hpf_ubercart_api_version', '7'),
+      );
+      
+      
+      // Section for managing merchant details
+      $form['merchant_settings'] = array(
+          '#type' => 'fieldset',
+          '#title' => t('Merchant Settings'),
+          '#description' => t('Manage the merchant ID that was provided to you by TNS.'),
+      );
+      
+      // Set the Live merchant ID
+      /**
+       * @todo Set some formatting/length about this field
+       */
+      $form['merchant_settings']['tnspay_hpf_ubercart_merchant_id_live'] = array(
+          '#type' => 'textfield',
+          '#title' => t('Live Merchant ID'),
+          '#description' => t('The Live Merchant ID supplied to you by TNS.'),
+          '#default_value' => variable_get('tnspay_hpf_ubercart_merchant_id_live',''),
+      );
+      
+      // Set the Test merchant ID
+      /**
+       * @todo Set some formatting/length about this field
+       */
+      $form['merchant_settings']['tnspay_hpf_ubercart_merchant_id_test'] = array(
+          '#type' => 'textfield',
+          '#title' => t('Test Merchant ID'),
+          '#description' => t('The Test Merchant ID supplied to you by TNS.'),
+          '#default_value' => variable_get('tnspay_hpf_ubercart_merchant_id_test','TEST' . variable_get('tnspay_hpf_ubercart_merchant_id_test', '')),
+      );
+      
+      // Section for managing authentication process
+      $form['authentication_settings'] = array(
+          '#type' => 'fieldset',
+          '#title' => t('Authentication Settings'),
+          '#description' => t('Set the authentication method that you will use to identify yourself to the TNSPay gateway.  If you are not using a certificate you will need to provide a password which will be stored securely'),
+      );
+      
+      // Choose the authentication method - 2 way SSL or Password
+      $form['authentication_settings']['tnspay_hpf_ubercart_authentication_method'] = array(
+          '#type' => 'radios',
+          '#title' => t('Authentication Method:'),
+          '#options' => array(
+              'certificate' => t('Certificate'),
+              'password' => t('Integration Authentication Password'),
+          ),
+          '#default_value' => variable_get('tnspay_hpf_ubercart_authentication_method', 'password'),
+      );
+      
+      // If password is chosen - make this mandatory...
+      /**
+       * @todo Set some length parameters etc around the integration password field.
+       */
+      $form['authentication_settings']['tnspay_hpf_ubercart_integration_password_1'] = array(
+          '#type' => 'textfield',
+          '#title' => t('Integration Authentication Password 1'),
+          '#description' => t('The Integration Authentication Password 1 value supplied by TNSi'),
+          '#default_value' => variable_get('tnspay_hpf_ubercart_integration_password_1'),
+          '#required' => (variable_get('tnspay_hpf_ubercart_authentication_method') == 'password'? TRUE: FALSE),
+      );
+            
+      // Send the form back to Drupal..
+      return($form);
+      
+      break;
+  }  
+}
+
+function tnspay_hpf_ubercart_form_uc_cart_checkout_form_alter(&$form, &$form_state, $form_id) {
+  /**
+   * @todo fix this so that it makes a decision based on whether it's good
+   * @var unknown_type
+   */
+  
+  $methods = _uc_payment_method_list();
+  
+  // Check that we've actually got his module enabled before we go tweaking the checkout form 
+  if (isset($methods['tnspay_hpf']) && $methods['tnspay_hpf']['checkout']) {
+    
+    // Call out to TNS and get a session ID if we don't already have one, or if the one we have is expired
+    if (!isset($_SESSION['TNSPAY_HPF_SESSION'])) {
+      if (_tnspay_hpf_ubercart_gateway_connect(TNSPAY_HPF_UBERCART_SESSION, '', $data, '', $session)) {
+        try {
+          $session_response = curl_exec($session);        
+        } catch (Exception $e) {
+            $result['success'] = FALSE;
+            $result['message'] = t("There was a problem communicating with the Payment Gateway.");
+            $result['comment'] = t("Exception Occurred: " . $e->getMessage());
+            echo $result['comment']; die;
+        }
+      } else { 
+        // Couldn't even put together the connection - fail out. 
+        $result['success'] = FALSE;
+        $result['message'] = t("A connection to the Payment Gateway could not be created.");
+        $result['comment'] = t("Failed at cURL init.");
+        echo $result['comment']; die;
+        
+        // seems we need to explicitly save these comments against the order...
+      }
+      
+      // Neatly close our session.
+      curl_close($session);
+      
+      // If we've got a session response we need to translate it and do something.. 
+      if (isset($session_response)) {
+        // change our JSON to an array {"error":{"cause":"INVALID_REQUEST","explanation":"Value 'PAY' is invalid. Pay request not permitted for this merchant.","field":"apiOperation","validationType":"INVALID"},"result":"ERROR"}
+        $response_array = json_decode($session_response, TRUE);
+        
+        if ($response_array['result'] == 'FAILURE') { 
+          /*** UNSUCCESSFUL COMMUNICATION ***/
+          // There's been a problem - fail the transaction and make a record
+          $result['success'] = FALSE;
+          $result['message'] = t("There was an error processing the transaction.");
+          $result['comment'] = t("Gateway responded: " . $response_array['error']['explanation']);
+          
+          echo $result['comment'];die;
+          
+          // No point continuing - flag out. 
+          $more_operations = FALSE;        
+        }
+        else {
+          /*** SUCCESSFUL COMMUNICATION ***/
+          // The transaction made it, determine what to do based on the result
+          if ($response_array['result'] == 'SUCCESS') {
+            /*** SUCCESSFUL TRANSACTION ***/
+            // @todo I'm not actually doing anything with this result?!?
+            $result['success'] = TRUE;
+            $result['message'] = t("Transaction was successfully processed.");
+            $result['comment'] = t("Session successfully established. Session ID: " . $response_array['session']);
+            // Set the ID in the session 
+            $_SESSION['TNSPAY_HPF_SESSION'] = array(
+                'session_id' => $response_array['session'],
+                'session_timestamp' => time(),
+            );
+          }
+        }
+      }
+    }
+    // Change the form action to send the form to TNS first
+    
+    // Lay down a base - we're building up to something like this: https://secure.ap.tnspayments.com/api/rest/version/7/merchant/{merchantId}/order/{orderid}/transaction/{transactionid}
+    $tmpURL = trim(variable_get('tnspay_hpf_ubercart_api_URL')); // Remove whitespace
+    // check that it doesn't end in a forward slash, otherwise remove it
+    if(strlen($tmpURL) && substr($tmpURL, -1) == '/') {
+      $tmpURL = rtrim($tmpURL, '/');
+    }
+    
+    $tmpURL .= "/form/" . $_SESSION['TNSPAY_HPF_SESSION']['session_id'];
+    
+    // Change the form action to the HPF form 
+    $form['#action'] = url($tmpURL);
+    $form['#validate'][] = 'tnspay_hpf_ubercart_form_uc_cart_checkout_form_validate';
+  }
+}
+
+/**
+ * Function to validate the HPF fields before passing the form on to be validated by the rest of the process
+ * 
+ * @implements form_validate
+ * 
+ */
+function tnspay_hpf_ubercart_form_uc_cart_checkout_form_validate(&$form, &$form_state) {
+  // @todo think about tweaking this to do nothing on AJAX validation - data shouldn't be contained in AJAX anyways...
+
+  //====---- START ERROR MESSAGE HACK ----====
+  // OK so we need to clear any crazy Drupal errors relating to these fields since we can't intercept the data before basic validation is run on it...
+  // we'll take TNS responses as gospel.Get any messages that these fields have made already...
+  // @todo This feels way too hackish, surely there's a better way to do this?!
+  $drupal_error_messages = drupal_get_messages('error'); // This gets ALL messages stored with Drupal and clears the messages
+  $form_errors = form_get_errors(); // This gets all the form errors and clears those.
+  $handled_messages = array(); // We'll keep track of handled messages and then put the difference back into the Drupal Messages manually...
+  // Which Fields do we pull Drupal error messages from?
+  $clear_fields = array('gatewayCardNumber','gatewayCardSecurityCode','gatewayCardExpiryDateMonth','gatewayCardExpiryDateYear');
+  
+  if (isset($form_errors) && count($form_errors)) {
+    foreach ($form_errors as $fekey => $feval) {
+      // we'll track the messages that we handle ourselves.
+      $handled_messages[] = $feval;
+      // if the message doesn't relate to one of the fields we want then add it back to the form errors
+      if (array_search($fekey, $clear_fields) == '') {
+        // form_set_error("gatewayCardNumber", 'error blah');
+        form_set_error($fekey, $feval); // Super bizarre - up here, form_set_error seems to be stuck in one place in the Drupal Message array, so we need to add our own message?!
+        drupal_set_message($feval, 'error');
+      }
+    }
+
+    // Now pop any other messages back in the Drupal stack that we haven't managed..
+    foreach (array_diff($drupal_error_messages['error'], $handled_messages) as $new_message) {
+      drupal_set_message($new_message, 'error');
+    }
+  }
+  //====---- END ERROR MESSAGE HACK ----====
+  
+  // repair our broken data structures to get the values back where they belong
+  $masked_card_number = explode('~', $form_state['input']['gatewayCardNumber'], 2);
+  $masked_card_security_code = explode('~', $form_state['input']['gatewayCardSecurityCode'], 2);
+  $expiry_date_month = explode('~', $form_state['input']['gatewayCardExpiryDateMonth'], 2);
+  $expiry_date_year = explode('~', $form_state['input']['gatewayCardExpiryDateYear'], 2);
+
+  // See if our masked card number indicates trouble?
+  if (count($masked_card_number) > 1) {
+    // Update the input values to remove the TNS response code... 
+    $form_state['input']['gatewayCardNumber'] = $masked_card_number[1];
+    // Tell ubercart something is uncool...
+    $form_state['checkout_valid'] = FALSE;
+    // Give Drupal Forms an error message.
+    form_set_error('gatewayCardNumber', t($masked_card_number[0] == 1?'Credit Card Number field is required.':'The Credit Card Number you supplied is invalid.'));
+    $form_state['rebuild'] = TRUE;
+  }
+  
+  // See if our masked security code indicates trouble?
+  if (count($masked_card_security_code) > 1) {
+    // Update the input values to remove the TNS response code...
+    $form_state['input']['gatewayCardSecurityCode'] = $masked_card_security_code[1];
+    // Tell ubercart something is uncool...
+    $form_state['checkout_valid'] = FALSE;
+    // Give Drupal Forms an error message.
+    form_set_error('gatewayCardSecurityCode', t($masked_card_security_code[0] == 1?'Credit Card Security Code field is required.':'The Credit Card Security Code you supplied is invalid.'));
+    $form_state['rebuild'] = TRUE;
+  }
+  
+  // See if our expiry date month indicates trouble?
+  if (count($expiry_date_month) > 1) {
+    // Update the input values to remove the TNS response code...
+    $form_state['input']['gatewayCardExpiryDateMonth'] = $expiry_date_month[1];
+    // Tell ubercart something is uncool...
+    $form_state['checkout_valid'] = FALSE;
+    // Give Drupal Forms an error message.
+    form_set_error('gatewayCardExpiryDateMonth', t($expiry_date_month[0] == 1?'Expiry Date Month field is required.':'The Expiry Date Month you supplied is invalid.'));
+    $form_state['rebuild'] = TRUE;
+  }
+
+  // See if our expiry date year indicates trouble?
+  if (count($expiry_date_year) > 1) {
+    // Update the input values to remove the TNS response code...
+    $form_state['input']['gatewayCardExpiryDateYear'] = $expiry_date_year[1];
+    // Tell ubercart something is uncool...
+    $form_state['checkout_valid'] = FALSE;
+    // Give Drupal Forms an error message.
+    form_set_error('gatewayCardExpiryDateYear', t($expiry_date_year[0] == 1?'Expiry Date Year field is required.':'The Expiry Date Year you supplied is invalid.'));
+    $form_state['rebuild'] = TRUE;
+  }
+
+  // rebuild the form with our new inputs... 
+  if ($form_state['rebuild']) {
+    $form = drupal_rebuild_form($form['#form_id'], $form_state, $form); // @todo For some reason the form rebuild doesn't update the form?!
+  } 
+}
+
+/**
+ * Function for actually processing the transaction against the gateway
+ *
+ * @todo Decision switching around the type of transaction: Pay vs Auth etc
+ */
+function tnspay_hpf_ubercart_process_transaction($order_id, $amount, $data) {
+  // Get the User
+  global $user;
+
+  // Set up the results to begin with - worst comes to worse we'll fail the result this way...
+  $result = array(
+      'success' => FALSE,
+      'message' => '',
+      'uid' => $user->uid,
+      'data' => array(),
+      'log_payment' => FALSE,
+      'comment' => '',
+      'pass' => FALSE,
+  );
+
+  // Get the order... we'll need that
+  $order = uc_order_load($order_id);
+  $more_operations = TRUE;
+
+  /**
+   * @todo We need to go into this knowing what type of transaction we're punting eg Auth-Capture vs Auth only.
+   */
+  while ($more_operations) {
+    // Work out what we're doing?
+    if (!isset($operation)) {
+      switch ($data['txn_type']) {
+        case 'prior_auth_capture':
+          $operation = TNSPAY_HPF_UBERCART_TXN_CAPTURE;
+          break;
+        case 'credit':
+          $operation = TNSPAY_HPF_UBERCART_TXN_REFUND;
+          break;
+        case 'void':
+          $operation = TNSPAY_HPF_UBERCART_TXN_VOID;
+          break;
+        case 'auth_capture':
+          if (isset($data['auth_id']))  {
+            $operation = TNSPAY_HPF_UBERCART_TXN_CAPTURE; // if there's already an auth_id on this just do the capture...
+            break;
+          } 
+          // otherwise fall through to AUTH first... 
+        case 'authorize':
+        default:
+          $operation = TNSPAY_HPF_UBERCART_TXN_AUTH;
+          break;
+          
+      }
+    }
+
+    if (TNSPAY_HPF_UBERCART_DEBUG && variable_get('tnspay_hpf_ubercart_api_mode') != 'Live') {
+      uc_order_comment_save($order_id, $user->uid, "--- BEGIN " . $operation . " ATTEMPT ---", 'admin');
+    } // Log debug note.
+
+
+    // OK the basics are set up, so let's start with some data to send...
+    $json_data = _tnspay_hpf_ubercart_build_json($operation, $order, $data, $amount);
+
+    if (TNSPAY_HPF_UBERCART_DEBUG && variable_get('tnspay_hpf_ubercart_api_mode') != 'Live') {
+      uc_order_comment_save($order_id, $user->uid, "--- Data to send: " . preg_replace('/(\"number\"\:\"\d{6})(\d{4,6})(\d{4}\")/', '$1------$3', $json_data), 'admin');
+    } // Log debug note.
+
+    // If we can put together a connection, then try the transaction
+    if (_tnspay_hpf_ubercart_gateway_connect($operation, $order_id, $data, $json_data, $session)) {
+      try {
+        $session_response = curl_exec($session);
+      } catch (Exception $e) {
+        $result['success'] = FALSE;
+        $result['message'] = t("There was a problem communicating with the Payment Gateway.");
+        $result['comment'] = t("Exception Occurred: " . $e->getMessage());
+
+        // seems we need to explicitly save these comments against the order...
+        uc_order_comment_save($order_id, $user->uid, $result['comment'], 'admin');
+      }
+    } else {
+      // Couldn't even put together the connection - fail out.
+      $result['success'] = FALSE;
+      $result['message'] = t("A connection to the Payment Gateway could not be created.");
+      $result['comment'] = t("Failed at cURL init.");
+
+      // seems we need to explicitly save these comments against the order...
+      uc_order_comment_save($order_id, $user->uid, $result['comment'], 'admin');
+    }
+
+    // Neatly close our session.
+    curl_close($session);
+
+    // If we've got a session response we need to translate it and do something..
+    if (isset($session_response)) {
+      // change our JSON to an array {"error":{"cause":"INVALID_REQUEST","explanation":"Value 'PAY' is invalid. Pay request not permitted for this merchant.","field":"apiOperation","validationType":"INVALID"},"result":"ERROR"}
+      $response_array = json_decode($session_response, TRUE);
+
+      if (TNSPAY_HPF_UBERCART_DEBUG && variable_get('tnspay_hpf_ubercart_api_mode') != 'Live') {
+        uc_order_comment_save($order_id, $user->uid, "--- Data received: " . $session_response, 'admin');
+      } // Log debug note.
+
+      if ($response_array['result'] == 'ERROR') {
+        /*** UNSUCCESSFUL COMMUNICATION ***/
+        // There's been a problem - fail the transaction and make a record
+        $result['success'] = FALSE;
+        $result['message'] = t("There was an error processing the transaction.");
+        $result['comment'] = t("Gateway responded: " . $response_array['error']['explanation']);
+
+        // seems we need to explicitly save these comments against the order...
+        uc_order_comment_save($order_id, $user->uid, $result['comment'], 'admin');
+        // No point continuing - flag out.
+        $more_operations = FALSE;
+      }
+      else {
+        /*** SUCCESSFUL COMMUNICATION ***/
+        // The transaction made it, determine what to do based on the result
+        if ($response_array['result'] == 'SUCCESS') {
+          /*** SUCCESSFUL TRANSACTION ***/
+          $result['success'] = TRUE;
+          $result['message'] = t("Transaction was successfully processed.");
+          $result['comment'] = t($operation . " Operation succeeded. Receipt Number #" . $response_array['transaction']['receipt']);
+
+          // Not sure if this is needed, but we'll find out...
+          uc_order_comment_save($order_id, $user->uid, $result['comment'], 'admin');
+
+          switch ($operation) {
+            case TNSPAY_UBERCART_TXN_AUTH:
+              uc_credit_log_authorization($order_id, $response_array['transaction']['authorizationCode'], $amount);
+              $result['log_payment'] = FALSE;
+              break;
+            case TNSPAY_UBERCART_TXN_CAPTURE:
+              uc_credit_log_prior_auth_capture($order_id, $response_array['transaction']['authorizationCode']);
+              $result['log_payment'] = TRUE;
+              break;
+          }
+        } elseif ($response_array['result'] == 'FAILURE') {
+          /*** UNSUCCESSFUL TRANSACTION ***/
+          $result['success'] = FALSE;
+          $result['message'] = t("The transaction was unsuccessful.");
+          $result['comment'] = t("Transaction Declined (Acquirer Code  " . $response_array['response']['acquirerCode'] . ". Gateway code " . $response_array['response']['gatewayCode'] . ")");
+
+          // seems we need to explicitly save these comments against the order...
+          uc_order_comment_save($order_id, $user->uid, $result['comment'], 'admin');
+
+          // No point continuing - flag out.
+          $more_operations = FALSE;
+        } else {
+          /*** UNSURE OF OUTCOME ***/
+        }
+
+
+      }
+    }
+    // Otherwise there's no response - a bit of a problem really...
+    else {
+      $result['success'] = FALSE;
+      $result['message'] = t("The Payment Gateway did not provide a response for the payment request.");
+      uc_order_comment_save($order_id, $user->uid, 'No response from gateway.', 'admin');
+    }
+
+    //  echo $session_response;
+    //  die;
+    // Pin the $data back to the order before we return it all...
+    $result['data'] = $data;
+
+    if (TNSPAY_HPF_UBERCART_DEBUG && variable_get('tnspay_hpf_ubercart_api_mode') != 'Live') {
+      uc_order_comment_save($order_id, $user->uid, "--- END " . $operation . " ATTEMPT ---", 'admin');
+    } // Log debug note.
+
+    // See if we've got more transactions to do?
+    if ($data['txn_type'] == 'auth_capture' && $operation == TNSPAY_UBERCART_TXN_AUTH && $more_operations) {
+      $operation = TNSPAY_UBERCART_TXN_CAPTURE;
+      $more_operations = TRUE; // We need to go again to do the capture... auth_capture should maybe translate to PAY ??
+    } else {
+      $more_operations = FALSE;
+    }
+  }
+  
+  // Hand it back to uc_payment...
+  return array($result);
+}
+
+/**
+ * Function to establish the connection with TNSPay
+ *
+ * @param $operation
+ *     The type of transaction operation that's being performed.
+ *
+ * @param $order_id
+ *     The $order_id value that the payment is being processed for.
+ *
+ * @param &$data
+ *     The $data object that was supplied for the order.
+ *
+ * @param &$session
+ *     Take a handle to the session that we're establishing.
+ *
+ * return boolean
+ *     TRUE if it's created a valid session - FALSE otherwise.
+ */
+function _tnspay_hpf_ubercart_gateway_connect($operation, $order_id, &$data, $json_data, &$session) {
+  global $user;
+
+  // Establish some local vars to play with
+  $api_version = variable_get('tnspay_hpf_ubercart_api_version');
+  $gateway_is_live = (variable_get('tnspay_hpf_ubercart_api_mode') == 'Live')?TRUE:FALSE;
+
+  $tns_orderid = $order_id + 10000000000; // An order ID is presented in TNS' URL and it needs to be a minimum of 10000000000
+
+  // We need a transaction ID and we should probably track it with the order...
+  if (!isset($data['tnspay_transaction_id'])) {
+    $data['tnspay_transaction_id'] = array();
+  }
+
+  array_push($data['tnspay_transaction_id'], uniqid()); // Throw a new unique ID onto the stack
+  $transaction_id = $data['tnspay_transaction_id'][count($data['tnspay_transaction_id']) - 1]; // Make this transaction ID the last in the stack
+
+  switch ($operation) {
+    case TNSPAY_HPF_UBERCART_TXN_AUTH:
+    case TNSPAY_HPF_UBERCART_TXN_CAPTURE:
+    case TNSPAY_HPF_UBERCART_TXN_PAY:
+    case TNSPAY_HPF_UBERCART_TXN_REFERRAL:
+    case TNSPAY_HPF_UBERCART_TXN_REFUND:
+    case TNSPAY_HPF_UBERCART_TXN_VERIFY:
+    case TNSPAY_HPF_UBERCART_TXN_VOID:
+      $http_method = 'PUT'; // Default to PUT - should explicitly set anyway depending on transaction type
+      break;
+    case TNSPAY_HPF_UBERCART_TXN_RETRIEVE:
+      $http_method = 'GET'; // Default to PUT - should explicitly set anyway depending on transaction type
+      break;
+    case TNSPAY_HPF_UBERCART_SESSION:
+      $http_method = 'POST';
+      break;      
+  }
+
+  // Lay down a base - we're building up to something like this: https://secure.ap.tnspayments.com/api/rest/version/7/merchant/{merchantId}/order/{orderid}/transaction/{transactionid}
+  $tmpURL = trim(variable_get('tnspay_hpf_ubercart_api_URL')); // Remove whitespace
+  // check that it doesn't end in a forward slash, otherwise remove it
+  if(strlen($tmpURL) && substr($tmpURL, -1) == '/') {
+    $tmpURL = rtrim($tmpURL, '/');
+  }
+
+  // By now we have a good base, let's append the rest of it:
+  $tmpURL .= "/api/rest/version/" . $api_version
+          . "/merchant/" . ($gateway_is_live?variable_get('tnspay_hpf_ubercart_hpf_merchant_id_live'):variable_get('tnspay_hpf_ubercart_merchant_id_test'));
+  switch ($operation) {
+    case TNSPAY_HPF_UBERCART_TXN_AUTH:
+    case TNSPAY_HPF_UBERCART_TXN_CAPTURE:
+    case TNSPAY_HPF_UBERCART_TXN_PAY:
+    case TNSPAY_HPF_UBERCART_TXN_REFERRAL:
+    case TNSPAY_HPF_UBERCART_TXN_REFUND:
+    case TNSPAY_HPF_UBERCART_TXN_VERIFY:
+    case TNSPAY_HPF_UBERCART_TXN_VOID:
+    case TNSPAY_HPF_UBERCART_TXN_RETRIEVE:
+      $tmpURL .= "/order/" . $tns_orderid
+              . "/transaction/" . $transaction_id;
+      break;
+    case TNSPAY_HPF_UBERCART_SESSION:
+      $tmpURL .= "/session";
+      break;
+  }
+
+  // Try to put it all together - if it goes belly up, bail out.
+  try {
+    $session = curl_init($tmpURL);
+
+    curl_setopt_array($session, array(
+        CURLOPT_RETURNTRANSFER => TRUE,
+        CURLOPT_CUSTOMREQUEST => $http_method,
+        CURLOPT_HTTPHEADER => array('Content-type: application/json;charset=UTF-8', 'Content-length: ' . strlen($json_data)),
+        CURLOPT_POSTFIELDS => $json_data,
+      )
+    );
+
+    // If we're authenticating by passsword - include that here.
+    if (variable_get('tnspay_hpf_ubercart_authentication_method') == 'password') {
+      curl_setopt($session, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+      curl_setopt($session, CURLOPT_USERPWD, ":" . variable_get('tnspay_hpf_ubercart_integration_password_1'));
+    }    
+  } catch (Exception $e) {
+    $session = NULL;
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+/**
+ * Function to build the json dataset
+ *
+ * @param $operation
+ *     The operation that will be sent to the gateway - defined by constants
+ *
+ * @param &$order
+ *     Pointer to the original order in the request.
+ *
+ * @param $amount
+ *     The amount that was sent to the function to be processed.
+ *
+ * @param $api_version
+ *     The Version of the API that the transaction is being submitted through.
+ *
+ * @return string
+ *    A string containing correctly structured JSON for the version of the API request
+ */
+function _tnspay_hpf_ubercart_build_json($operation, &$order, $data, $amount) {
+  // initialise
+  $api_version = variable_get('tnspay_ubercart_api_version');
+  $transaction_data = array();
+
+  // add the apiOperation value if it's required...
+  switch ($operation) {
+    case TNSPAY_UBERCART_TXN_AUTH:
+    case TNSPAY_UBERCART_TXN_CAPTURE:
+    case TNSPAY_UBERCART_TXN_PAY:
+    case TNSPAY_UBERCART_TXN_REFERRAL:
+    case TNSPAY_UBERCART_TXN_REFUND:
+    case TNSPAY_UBERCART_TXN_VERIFY:
+    case TNSPAY_UBERCART_TXN_VOID:
+      $transaction_data['apiOperation'] = $operation;
+      break;
+  }
+
+  // NOTE! We use the data straight from the $order to prevent needlessly copying Credit Card data a thousand times in memory.
+  // Start with things that haven't changed... then make version specific additions
+  if (isset($_SESSION['TNSPAY_HPF_SESSION'])) {
+    $transaction_data['cardDetails']['session'] = $_SESSION['TNSPAY_HPF_SESSION']['session_id'];
+  } else {
+    // raise a flag that we don't have a CC number.. how did we even get here?!?
+     
+  }
+  if (isset($amount) && isset($order->currency) && $amount > 0) {
+    // We need a non-zero amount and a currency to go with it...
+    $transaction_data['transaction']['amount'] = "" . $amount;  // Amount actually needs to be a string so do the concat to trick it up...
+    $transaction_data['transaction']['currency'] = $order->currency;
+  } else {
+    // Fail it - can't proceed without this!
+
+  }
+
+  $transaction_data['order']['reference'] = $order->order_id;
+  $transaction_data['transaction']['source'] = 'INTERNET';
+
+  // Is this a capture transaction - if so we need an auth_id otherwise we should fall over.
+  if ($operation == TNSPAY_UBERCART_TXN_CAPTURE && isset($data['auth_id'])) {
+    $transaction_data['transaction']['authorizationCode'] = $data['auth_id'];
+  } elseif ($operation == TNSPAY_UBERCART_TXN_CAPTURE && !isset($data['auth_id'])) {
+    // Error here - we don't have an auth to capture against.
+
+  }
+
+  // Protect the changing data structures by version
+  switch ($api_version) {
+    case 7:
+    default:
+      break;
+  }
+
+  // Flip our Array into a JSON structure and return that...
+  return json_encode($transaction_data);
+}

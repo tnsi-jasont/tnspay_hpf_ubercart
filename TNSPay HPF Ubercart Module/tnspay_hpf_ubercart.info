@@ -1,0 +1,5 @@
+name = TNSPay Hosted Payment Form
+description = Process payments using the TNSPay Hosted Payment Form
+core = 7.x
+dependencies[] = uc_payment
+package = Ubercart - payment
