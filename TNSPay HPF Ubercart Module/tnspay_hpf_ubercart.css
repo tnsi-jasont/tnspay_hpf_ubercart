@@ -1,0 +1,23 @@
+@CHARSET "ISO-8859-1";
+.payment-details-tnspay_hpf .form-item label {
+	float: left;
+	padding-right: 4px;
+	text-align: right;
+	width: 15em;
+}
+
+.form-item-gatewayCardExpiryDateYear label { 
+  width: 4em !important;
+}
+
+.uc-cart-checkout-form .payment-details-tnspay_hpf .form-item label {
+  padding: 5px 6px 6px;
+}
+
+div.form-item-gatewayCardExpiryDateMonth {
+	float: left;
+}
+
+div.form-item-gatewayCardSecurityCode { 
+	clear: left;
+}
